@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import Fastify from 'fastify';
 import pg from 'pg';
+import { StrKey } from '@stellar/stellar-sdk';
 import { z } from 'zod';
 import { verifyWebhook } from '../../src/protocol/webhook.js';
 
@@ -28,7 +29,8 @@ const payloadSchema = z.object({
   raw: z.object({ topics_xdr: z.array(z.string()).min(1).max(4), value_xdr: z.string() }),
   decoded: z.object({ name: z.literal('ticket'), schema_version: z.literal(1),
     event_id: z.string().regex(/^\d+$/), reservation_id: z.string().regex(/^\d+$/),
-    attendee: z.string().startsWith('G'), reserved_after: z.number().int().positive() }),
+    attendee: z.string().refine((value) => StrKey.isValidEd25519PublicKey(value) || StrKey.isValidContract(value)),
+    reserved_after: z.number().int().positive() }),
   replay: z.object({ plan_id: z.uuid() }).nullable(),
 });
 

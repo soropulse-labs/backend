@@ -10,4 +10,6 @@ Verified locally after session recovery: `pnpm lint`, `pnpm typecheck`, `pnpm bu
 
 Stellar testnet RPC `getHealth` returned `healthy` with oldest ledger 4,924,540 and latest ledger 5,045,499 on 2026-10-06. A `getEvents` query for the pinned contract over ledgers 4,990,360–4,990,361 returned an empty `events` array. This proves RPC availability for that query, not contract or backend integration. The reference contract may emit events outside that narrow window; no claim about live event capture follows from the empty response.
 
-Next tasks: expand PostgreSQL integration coverage to delivery, receipt and replay failure boundaries; implement the failure lab; finish security review, OpenAPI and frontend handoff, deployment tooling and live smoke test. CI is configured but has not yet run on GitHub. The current branch is not ready to merge as a complete MVP.
+The isolated ticket consumer also passed a real-PostgreSQL test: two signed deliveries for one blockchain event created one ticket and two receipt-outbox entries. This used the locally generated contract fixture and a separate test database. It did not verify successful receipt delivery back to the API.
+
+Next tasks: expand PostgreSQL integration coverage to receipt and replay failure boundaries; implement the failure lab; finish security review, OpenAPI and deployment tooling; run a live testnet smoke test. GitHub CI passed run `37401320447`; the newer local signed-delivery and consumer tests are awaiting a CI push. The current branch is not ready to merge as a complete MVP.
