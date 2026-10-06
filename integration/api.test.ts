@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import pg from 'pg';
 import { createDatabase } from '../src/db/client.js';
-import { loadConfig } from '../src/config.js';
+import type { Config } from '../src/config.js';
 import { createApp } from '../src/api/server.js';
 import { encrypt } from '../src/crypto.js';
 
@@ -23,7 +23,15 @@ test('scoped receipts are idempotent and replay rechecks reported success', asyn
   let app: Awaited<ReturnType<typeof createApp>> | undefined;
   try {
     await migrate(db, { migrationsFolder: './drizzle' });
-    const config = { ...loadConfig(), DATABASE_URL: url.toString(), NODE_ENV: 'development' as const, DEV_AUTH_ENABLED: true };
+    const config: Config = {
+      NODE_ENV: 'development', DATABASE_URL: url.toString(),
+      STELLAR_RPC_URL: 'https://soroban-testnet.stellar.org',
+      NETWORK_PASSPHRASE: 'Test SDF Network ; September 2015', NETWORK_EPOCH: 'integration', START_LEDGER: 1,
+      API_HOST: '127.0.0.1', API_PORT: 3001, PUBLIC_BASE_URL: 'http://localhost:3001',
+      FRONTEND_ORIGIN: 'http://localhost:3000', GITHUB_CLIENT_ID: '', GITHUB_CLIENT_SECRET: '',
+      SESSION_SECRET: 'x'.repeat(32), ENCRYPTION_KEY: '0'.repeat(64),
+      DEV_AUTH_ENABLED: true, DEV_ALLOWED_ENDPOINTS: '',
+    };
     app = await createApp(pool, config);
     const login = await app.inject({ method: 'POST', url: '/v1/auth/dev-login', payload: { login: `test${randomUUID().slice(0, 8)}` } });
     assert.equal(login.statusCode, 200, login.body);

@@ -1,0 +1,213 @@
+# Import this Blueprint from the backend repository branch after reviewing cost and secrets.
+# The consumer uses its own PostgreSQL instance. No values here are private credentials.
+databases:
+  - name: soropulse-db
+    databaseName: soropulse
+    user: soropulse
+  - name: soropulse-consumer-db
+    databaseName: soropulse_consumer
+    user: soropulse_consumer
+
+services:
+  - type: web
+    name: soropulse-api
+    runtime: node
+    buildCommand: corepack enable && corepack prepare pnpm@9.15.9 --activate && pnpm install --frozen-lockfile && pnpm build
+    preDeployCommand: node dist/src/db/migrate.js
+    startCommand: node dist/src/api/main.js
+    healthCheckPath: /v1/health/ready
+    envVars:
+      - key: NODE_VERSION
+        value: 22.23.2
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: soropulse-db
+          property: connectionString
+      - key: STELLAR_RPC_URL
+        value: https://soroban-testnet.stellar.org
+      - key: NETWORK_PASSPHRASE
+        value: Test SDF Network ; September 2015
+      - key: NETWORK_EPOCH
+        sync: false
+      - key: START_LEDGER
+        sync: false
+      - key: API_HOST
+        value: 0.0.0.0
+      - key: API_PORT
+        value: 10000
+      - key: PUBLIC_BASE_URL
+        sync: false
+      - key: FRONTEND_ORIGIN
+        sync: false
+      - key: GITHUB_CLIENT_ID
+        sync: false
+      - key: GITHUB_CLIENT_SECRET
+        sync: false
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: ENCRYPTION_KEY
+        sync: false
+      - key: DEV_AUTH_ENABLED
+        value: "false"
+
+  - type: worker
+    name: soropulse-ingest
+    runtime: node
+    buildCommand: corepack enable && corepack prepare pnpm@9.15.9 --activate && pnpm install --frozen-lockfile && pnpm build
+    startCommand: node dist/src/worker/ingest-main.js
+    envVars:
+      - key: NODE_VERSION
+        value: 22.23.2
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: soropulse-db
+          property: connectionString
+      - key: STELLAR_RPC_URL
+        value: https://soroban-testnet.stellar.org
+      - key: NETWORK_PASSPHRASE
+        value: Test SDF Network ; September 2015
+      - key: NETWORK_EPOCH
+        fromService:
+          name: soropulse-api
+          type: web
+          envVarKey: NETWORK_EPOCH
+      - key: START_LEDGER
+        fromService:
+          name: soropulse-api
+          type: web
+          envVarKey: START_LEDGER
+      - key: PUBLIC_BASE_URL
+        fromService:
+          name: soropulse-api
+          type: web
+          envVarKey: PUBLIC_BASE_URL
+      - key: FRONTEND_ORIGIN
+        fromService:
+          name: soropulse-api
+          type: web
+          envVarKey: FRONTEND_ORIGIN
+      - key: GITHUB_CLIENT_ID
+        fromService:
+          name: soropulse-api
+          type: web
+          envVarKey: GITHUB_CLIENT_ID
+      - key: GITHUB_CLIENT_SECRET
+        fromService:
+          name: soropulse-api
+          type: web
+          envVarKey: GITHUB_CLIENT_SECRET
+      - key: SESSION_SECRET
+        fromService:
+          name: soropulse-api
+          type: web
+          envVarKey: SESSION_SECRET
+      - key: ENCRYPTION_KEY
+        fromService:
+          name: soropulse-api
+          type: web
+          envVarKey: ENCRYPTION_KEY
+
+  - type: worker
+    name: soropulse-deliver
+    runtime: node
+    buildCommand: corepack enable && corepack prepare pnpm@9.15.9 --activate && pnpm install --frozen-lockfile && pnpm build
+    startCommand: node dist/src/worker/deliver-main.js
+    envVars:
+      - key: NODE_VERSION
+        value: 22.23.2
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: soropulse-db
+          property: connectionString
+      - key: STELLAR_RPC_URL
+        value: https://soroban-testnet.stellar.org
+      - key: NETWORK_PASSPHRASE
+        value: Test SDF Network ; September 2015
+      - key: NETWORK_EPOCH
+        fromService:
+          name: soropulse-api
+          type: web
+          envVarKey: NETWORK_EPOCH
+      - key: START_LEDGER
+        fromService:
+          name: soropulse-api
+          type: web
+          envVarKey: START_LEDGER
+      - key: PUBLIC_BASE_URL
+        fromService:
+          name: soropulse-api
+          type: web
+          envVarKey: PUBLIC_BASE_URL
+      - key: FRONTEND_ORIGIN
+        fromService:
+          name: soropulse-api
+          type: web
+          envVarKey: FRONTEND_ORIGIN
+      - key: GITHUB_CLIENT_ID
+        fromService:
+          name: soropulse-api
+          type: web
+          envVarKey: GITHUB_CLIENT_ID
+      - key: GITHUB_CLIENT_SECRET
+        fromService:
+          name: soropulse-api
+          type: web
+          envVarKey: GITHUB_CLIENT_SECRET
+      - key: SESSION_SECRET
+        fromService:
+          name: soropulse-api
+          type: web
+          envVarKey: SESSION_SECRET
+      - key: ENCRYPTION_KEY
+        fromService:
+          name: soropulse-api
+          type: web
+          envVarKey: ENCRYPTION_KEY
+
+  - type: web
+    name: soropulse-ticket-consumer
+    runtime: node
+    buildCommand: corepack enable && corepack prepare pnpm@9.15.9 --activate && pnpm install --frozen-lockfile && pnpm build && mkdir -p dist/examples/ticket-consumer && cp examples/ticket-consumer/schema.sql dist/examples/ticket-consumer/schema.sql
+    startCommand: node dist/examples/ticket-consumer/main.js
+    healthCheckPath: /health/live
+    envVars:
+      - key: NODE_VERSION
+        value: 22.23.2
+      - key: NODE_ENV
+        value: production
+      - key: CONSUMER_DATABASE_URL
+        fromDatabase:
+          name: soropulse-consumer-db
+          property: connectionString
+      - key: CONSUMER_HOST
+        value: 0.0.0.0
+      - key: CONSUMER_PORT
+        value: 10000
+      - key: CONSUMER_ID
+        sync: false
+      - key: CONSUMER_RECEIPT_CREDENTIAL
+        sync: false
+      - key: CONSUMER_SIGNING_KEY_ID
+        sync: false
+      - key: CONSUMER_SIGNING_SECRET
+        sync: false
+      - key: CONSUMER_CONTRACT_ID
+        value: CAUKWP7TRYYXAF2C5NDAZEAQVWCUMXX76KBPK64MQBZHU7EUJ5JVPHGG
+      - key: NETWORK_EPOCH
+        fromService:
+          name: soropulse-api
+          type: web
+          envVarKey: NETWORK_EPOCH
+      - key: API_URL
+        fromService:
+          name: soropulse-api
+          type: web
+          envVarKey: PUBLIC_BASE_URL
+      - key: DEMO_API_KEY
+        generateValue: true
