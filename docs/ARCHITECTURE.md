@@ -1,0 +1,7 @@
+# Architecture
+
+The API owns users, projects, testnet environments, API keys, endpoint registration, subscriptions, receipts, traces, and replay plans. The ingestion worker polls Stellar RPC per subscription using PostgreSQL stream leases and stores a bounded ledger window. In one transaction it writes captured events, initial delivery jobs, incidents, and the next checkpoint. The delivery worker claims jobs with PostgreSQL row locks and leases, sends signed HTTPS webhooks without an open database transaction, then records the attempt and next state under a lease fence. The example consumer uses a separate database, durable inbox, unique ticket identity, and receipt outbox.
+
+Event identity is `(environment, network, epoch, contract, RPC event ID)`. This permits different tenant environments to subscribe to the same contract without sharing capture rows. Network epochs separate testnet resets. A transaction hash is metadata for lookup, not an event identity. Business event and reservation IDs from the reference contract are decimal strings in the optional decoder. UTC timestamps are stored as `timestamptz`.
+
+The control plane is not the receiver's source of business truth. A delivery HTTP 2xx acknowledges transport; optional processing receipts report application outcome. The backend can provide evidence of capture, attempts, and receipts, but cannot prove what an uninstrumented application did internally.

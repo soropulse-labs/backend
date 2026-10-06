@@ -5,6 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { xdr } from '@stellar/stellar-sdk';
 import pg from 'pg';
 import { ingestOnce } from '../src/worker/ingest.js';
+import { claimDeliveries } from '../src/worker/deliver.js';
 import type { RawRpcEvent } from '../src/stellar/decoder.js';
 import type { StellarRpc } from '../src/stellar/rpc.js';
 
@@ -68,6 +69,9 @@ test('ingestion commits events, jobs, and checkpoint together while isolating te
       SELECT s.next_ledger FROM ingestion_streams s JOIN subscriptions sub ON sub.id=s.subscription_id
       WHERE sub.environment_id=ANY($1::uuid[])`, [envs]);
     assert.ok(streams.rows.every((row) => row.next_ledger === String(ledger + 1)));
+    const [firstClaims, secondClaims] = await Promise.all([claimDeliveries(pool, 5), claimDeliveries(pool, 5)]);
+    assert.equal(firstClaims.length + secondClaims.length, 4);
+    assert.equal(new Set([...firstClaims, ...secondClaims].map((row) => row.id)).size, 4);
   } finally {
     for (const env of envs) await pool.query('DELETE FROM ingestion_streams WHERE subscription_id IN (SELECT id FROM subscriptions WHERE environment_id=$1)', [env]);
     for (const env of envs) await pool.query('DELETE FROM deliveries WHERE event_id IN (SELECT id FROM captured_events WHERE environment_id=$1)', [env]);

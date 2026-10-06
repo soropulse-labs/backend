@@ -32,8 +32,11 @@ export async function claimDeliveries(pool: pg.Pool, limit = 5): Promise<Claimed
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    const candidates = await client.query<{ id: string; status: string; attempt_count: number; attempt_started_at: Date | null }>(`
-      SELECT d.id,d.status,d.attempt_count,d.attempt_started_at FROM deliveries d
+    const candidates = await client.query<{ id: string; status: string; attempt_count: number; attempt_started_at: Date | null; endpoint_id: string; active_count: string }>(`
+      SELECT d.id,d.status,d.attempt_count,d.attempt_started_at,ep.id AS endpoint_id,
+        (SELECT count(*) FROM deliveries active JOIN endpoint_versions av ON av.id=active.endpoint_version_id
+         WHERE av.endpoint_id=ep.id AND active.status='in_flight' AND active.lease_until>now()) AS active_count
+      FROM deliveries d
       JOIN endpoint_versions v ON v.id=d.endpoint_version_id
       JOIN endpoints ep ON ep.id=v.endpoint_id
       LEFT JOIN replay_plans rp ON rp.id=d.replay_plan_id
@@ -43,9 +46,12 @@ export async function claimDeliveries(pool: pg.Pool, limit = 5): Promise<Claimed
         AND ep.disabled_at IS NULL AND v.verified_at IS NOT NULL
         AND (SELECT count(*) FROM deliveries active JOIN endpoint_versions av ON av.id=active.endpoint_version_id
              WHERE av.endpoint_id=ep.id AND active.status='in_flight' AND active.lease_until>now())<2
-      ORDER BY d.next_attempt_at,d.created_at FOR UPDATE OF d SKIP LOCKED LIMIT $1`, [Math.min(10, Math.max(1, limit))]);
+      ORDER BY d.next_attempt_at,d.created_at FOR UPDATE OF d,ep SKIP LOCKED LIMIT $1`, [Math.min(10, Math.max(1, limit))]);
     const ids: string[] = [];
+    const claimedPerEndpoint = new Map<string, number>();
     for (const row of candidates.rows) {
+      const alreadyClaimed = claimedPerEndpoint.get(row.endpoint_id) ?? 0;
+      if (Number(row.active_count) + alreadyClaimed >= 2) continue;
       if (row.status === 'in_flight' && row.attempt_started_at) {
         await client.query(`INSERT INTO delivery_attempts(delivery_id,attempt_number,started_at,completed_at,duration_ms,failure_class)
           VALUES ($1,$2,$3,now(),GREATEST(0,extract(epoch from (now()-$3::timestamptz))*1000)::int,'worker_lease_expired')
@@ -56,6 +62,7 @@ export async function claimDeliveries(pool: pg.Pool, limit = 5): Promise<Claimed
         lease_until=now()+interval '30 seconds', attempt_started_at=now(), attempt_count=attempt_count+1
         WHERE id=$1`, [row.id, token]);
       ids.push(row.id);
+      claimedPerEndpoint.set(row.endpoint_id, alreadyClaimed + 1);
     }
     let result: ClaimedDelivery[] = [];
     if (ids.length) {

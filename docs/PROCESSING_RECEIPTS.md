@@ -1,0 +1,7 @@
+# Processing receipts v1
+
+`POST /v1/processing-receipts` accepts a dedicated `spr_` bearer credential created for one consumer in one environment. Its JSON body has `schema_version: 1`, `receipt_id`, blockchain `event_id`, `delivery_id`, `consumer_id`, `processing_run_id`, integer `sequence`, `status` (`processing`, `succeeded`, or `failed`), and offset-aware `observed_at`. Optional bounded fields are `error` and `business_reference`. The backend validates the credential's consumer and environment against the referenced delivery and event. Receipt credentials never belong in browser code.
+
+Receipts are append-only. Identical reuse of a receipt ID returns `{accepted:true,duplicate:true}`; conflicting reuse or a duplicate run sequence returns HTTP 409. Receipt arrival does not depend on the delivery worker having recorded HTTP acknowledgement, so an application can report a committed action even if its webhook response was lost. The trace API keeps transport and application status separate. An application-reported success takes precedence over a later failure from another run. Conflicting terminal statuses within one run are shown as `conflict`.
+
+This MVP still needs a stricter server-side terminal-state transition rule and concurrency tests for out-of-order receipts. Until then, consumers should issue monotonic sequences per processing run and avoid submitting both `succeeded` and `failed` for one run. Missing receipts mean unknown processing outcome, not failed processing; they do not trigger automatic replay.
