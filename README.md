@@ -23,6 +23,6 @@ Each `dev:*` command runs in its own terminal. `pnpm dev:consumer` runs the isol
 
 The API listens on `http://localhost:3001` by default. Liveness is `/v1/health/live` and database readiness is `/v1/health/ready`. The workers are continuously running processes; a request-only serverless host cannot ingest or deliver in the background.
 
-The reference contract schema is pinned to `soropulse-labs/contracts` commit `34a2beb2bc9f189e3c0d25023b90ea5a54132cc6`. The documented testnet contract is `CAUKWP7TRYYXAF2C5NDAZEAQVWCUMXX76KBPK64MQBZHU7EUJ5JVPHGG`. Current live availability has **not** been verified by this backend. The checked-in XDR fixture was locally generated, not captured from testnet.
+The reference contract schema is pinned to `soropulse-labs/contracts` commit `34a2beb2bc9f189e3c0d25023b90ea5a54132cc6`. The documented testnet contract is `CAUKWP7TRYYXAF2C5NDAZEAQVWCUMXX76KBPK64MQBZHU7EUJ5JVPHGG`. A local smoke test captured two live testnet reservation events and delivered them to a temporary local receiver; see [build status](docs/BUILD_STATUS.md). The checked-in XDR fixture was locally generated, not captured from testnet.
 
 The backend owns webhook delivery, retries, receipts, and replay. A consumer must deduplicate event identity and apply business changes transactionally; an HTTP 2xx alone proves only transport acknowledgement.

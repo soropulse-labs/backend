@@ -25,7 +25,7 @@ export class StellarRpc {
   getEvents(params: { startLedger?: number; endLedger?: number; cursor?: string; contractId: string; topic0Xdr?: string | null; limit?: number }): Promise<EventsResponse> {
     const { contractId, topic0Xdr, limit = 100, cursor, startLedger, endLedger } = params;
     const filter: Record<string, unknown> = { type: 'contract', contractIds: [contractId] };
-    if (topic0Xdr) filter.topics = [[topic0Xdr]];
+    if (topic0Xdr) filter.topics = [[topic0Xdr, '**']];
     return this.call('getEvents', {
       ...(cursor ? {} : { startLedger, endLedger }),
       filters: [filter], pagination: { limit, ...(cursor ? { cursor } : {}) },

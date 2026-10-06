@@ -12,5 +12,5 @@
     "rootDir": ".",
     "resolveJsonModule": true
   },
-  "include": ["src/**/*.ts", "examples/**/*.ts", "test/**/*.ts", "integration/**/*.ts", "drizzle.config.ts"]
+  "include": ["src/**/*.ts", "examples/**/*.ts", "test/**/*.ts", "integration/**/*.ts", "scripts/**/*.ts", "drizzle.config.ts"]
 }
