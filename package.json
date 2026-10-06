@@ -12,6 +12,8 @@
     "test": "node --import tsx --test test/*.test.ts",
     "test:integration": "node --import tsx --test integration/*.test.ts",
     "smoke:testnet": "node --import tsx scripts/live-smoke.ts",
+    "openapi:generate": "node --import tsx scripts/openapi.ts",
+    "openapi:check": "node --import tsx scripts/openapi.ts --check",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "node --import tsx src/db/migrate.ts",
     "dev:api": "tsx watch src/api/main.ts",

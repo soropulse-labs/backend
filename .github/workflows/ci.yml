@@ -31,6 +31,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm lint
       - run: pnpm typecheck
+      - run: pnpm openapi:check
       - run: pnpm test
       - run: pnpm db:migrate
       - run: pnpm test:integration
