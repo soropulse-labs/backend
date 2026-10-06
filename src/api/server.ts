@@ -10,6 +10,7 @@ import { registerAuthRoutes } from './auth.js';
 import { registerControlRoutes } from './control.js';
 import { registerReceiptRoutes } from './receipts.js';
 import { registerTraceRoutes } from './trace.js';
+import { registerReplayRoutes } from './replay.js';
 
 export async function createApp(pool: pg.Pool, config: Config) {
   const app = Fastify({
@@ -41,6 +42,7 @@ export async function createApp(pool: pg.Pool, config: Config) {
   registerControlRoutes(app, pool, config);
   registerReceiptRoutes(app, pool);
   registerTraceRoutes(app, pool);
+  registerReplayRoutes(app, pool);
   await app.ready();
   return app;
 }

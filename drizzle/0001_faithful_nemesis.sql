@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX "delivery_replay_idx" ON "deliveries" USING btree ("replay_plan_id","event_id","subscription_id") WHERE "deliveries"."replay_plan_id" IS NOT NULL;

@@ -36,8 +36,10 @@ export async function claimDeliveries(pool: pg.Pool, limit = 5): Promise<Claimed
       SELECT d.id,d.status,d.attempt_count,d.attempt_started_at FROM deliveries d
       JOIN endpoint_versions v ON v.id=d.endpoint_version_id
       JOIN endpoints ep ON ep.id=v.endpoint_id
+      LEFT JOIN replay_plans rp ON rp.id=d.replay_plan_id
       WHERE ((d.status IN ('queued','retry_scheduled') AND d.next_attempt_at<=now())
         OR (d.status='in_flight' AND d.lease_until<now()))
+        AND (d.replay_plan_id IS NULL OR rp.status='executed')
         AND ep.disabled_at IS NULL AND v.verified_at IS NOT NULL
         AND (SELECT count(*) FROM deliveries active JOIN endpoint_versions av ON av.id=active.endpoint_version_id
              WHERE av.endpoint_id=ep.id AND active.status='in_flight' AND active.lease_until>now())<2

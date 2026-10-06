@@ -95,6 +95,7 @@ export const deliveries = pgTable('deliveries', {
   acknowledgedAt: time('acknowledged_at'), createdAt: time('created_at').notNull().defaultNow(),
 }, (t) => [
   uniqueIndex('delivery_initial_idx').on(t.eventId, t.subscriptionId).where(sql`${t.replayPlanId} IS NULL`),
+  uniqueIndex('delivery_replay_idx').on(t.replayPlanId, t.eventId, t.subscriptionId).where(sql`${t.replayPlanId} IS NOT NULL`),
   index('delivery_queue_idx').on(t.status, t.nextAttemptAt),
 ]);
 
