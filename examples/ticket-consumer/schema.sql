@@ -42,3 +42,12 @@ CREATE TABLE IF NOT EXISTS receipt_outbox (
   last_error text
 );
 CREATE INDEX IF NOT EXISTS receipt_outbox_pending_idx ON receipt_outbox(next_attempt_at) WHERE sent_at IS NULL;
+CREATE TABLE IF NOT EXISTS lab_sessions (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  token_hash text NOT NULL UNIQUE,
+  scenario text NOT NULL CHECK (scenario IN ('http_503','timeout','duplicate','commit_drop')),
+  budget integer NOT NULL CHECK (budget BETWEEN 1 AND 3),
+  used integer NOT NULL DEFAULT 0,
+  expires_at timestamptz NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+);

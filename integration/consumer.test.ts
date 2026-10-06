@@ -82,6 +82,25 @@ test('ticket consumer survives duplicate delivery with one business ticket', asy
     }
     assert.equal(ticketCount, 1);
     assert.equal(receiptCount, 2);
+    const created = await fetch(`http://127.0.0.1:${port}/demo/lab-sessions`, { method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-demo-key': 'b'.repeat(40) },
+      body: JSON.stringify({ scenario: 'http_503', budget: 1, ttl_seconds: 60 }) });
+    assert.equal(created.status, 201);
+    const lab = await created.json() as { id: string; token: string };
+    const labDeliveryId = randomUUID();
+    const labBody = Buffer.from(JSON.stringify({ schema_version: 1, event_id: raw.id, delivery_id: labDeliveryId,
+      network: 'testnet', epoch, contract_id: contractId, transaction_hash: raw.txHash, ledger: raw.ledger,
+      ledger_closed_at: null, raw: { topics_xdr: raw.topic, value_xdr: raw.value }, decoded: decoded.decoded, replay: null,
+      lab: { session_id: lab.id, token: lab.token } }));
+    const labHeaders = webhookHeaders(secret, keyId, labDeliveryId, labBody);
+    const failed = await fetch(`http://127.0.0.1:${port}/webhook`, { method: 'POST', headers: labHeaders, body: labBody });
+    assert.equal(failed.status, 503);
+    const retry = await fetch(`http://127.0.0.1:${port}/webhook`, { method: 'POST', headers: labHeaders, body: labBody });
+    assert.equal(retry.status, 202);
+    const result = await fetch(`http://127.0.0.1:${port}/demo/lab-sessions/${lab.id}`,
+      { headers: { 'x-demo-key': 'b'.repeat(40) } });
+    assert.equal((await result.json() as { used: number }).used, 1);
+    assert.equal(Number((await pool.query<{ count: string }>('SELECT count(*)::text AS count FROM tickets')).rows[0]!.count), 1);
   } finally {
     child.kill('SIGTERM');
     await new Promise<void>((resolve) => { if (child.exitCode !== null) resolve(); else child.once('exit', () => resolve()); });

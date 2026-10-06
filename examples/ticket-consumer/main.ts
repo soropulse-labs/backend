@@ -5,9 +5,11 @@ import pg from 'pg';
 import { StrKey } from '@stellar/stellar-sdk';
 import { z } from 'zod';
 import { verifyWebhook } from '../../src/protocol/webhook.js';
+import { hashSecret, newSecret } from '../../src/crypto.js';
 
 if (existsSync('.env')) process.loadEnvFile('.env');
 const cfg = z.object({
+  NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   CONSUMER_DATABASE_URL: z.string().url(), CONSUMER_ID: z.uuid(),
   CONSUMER_RECEIPT_CREDENTIAL: z.string().startsWith('spr_'),
   CONSUMER_SIGNING_KEY_ID: z.uuid(), CONSUMER_SIGNING_SECRET: z.string().min(32),
@@ -32,6 +34,7 @@ const payloadSchema = z.object({
     attendee: z.string().refine((value) => StrKey.isValidEd25519PublicKey(value) || StrKey.isValidContract(value)),
     reserved_after: z.number().int().positive() }),
   replay: z.object({ plan_id: z.uuid() }).nullable(),
+  lab: z.object({ session_id: z.uuid(), token: z.string().startsWith('lab_') }).optional(),
 });
 
 app.post('/webhook', async (request, reply) => {
@@ -55,6 +58,19 @@ app.post('/webhook', async (request, reply) => {
   if (payload.delivery_id !== deliveryId || payload.contract_id !== cfg.CONSUMER_CONTRACT_ID || payload.epoch !== cfg.NETWORK_EPOCH) {
     return reply.code(403).send({ error: 'Out-of-scope event' });
   }
+  let labScenario: string | null = null;
+  if (payload.lab) {
+    if (cfg.NODE_ENV === 'production') return reply.code(403).send({ error: 'Lab disabled' });
+    const valid = await pool.query<{ scenario: string }>(`SELECT scenario FROM lab_sessions
+      WHERE id=$1 AND token_hash=$2 AND expires_at>now()`, [payload.lab.session_id, hashSecret(payload.lab.token)]);
+    if (!valid.rows[0]) return reply.code(403).send({ error: 'Invalid lab session' });
+    const claimed = await pool.query<{ scenario: string }>(`UPDATE lab_sessions SET used=used+1
+      WHERE id=$1 AND token_hash=$2 AND expires_at>now() AND used<budget RETURNING scenario`,
+    [payload.lab.session_id, hashSecret(payload.lab.token)]);
+    labScenario = claimed.rows[0]?.scenario ?? null;
+    if (labScenario === 'http_503') return reply.code(503).send({ error: 'Lab simulated 503' });
+    if (labScenario === 'timeout') await new Promise((resolve) => setTimeout(resolve, 11000));
+  }
   const stable = JSON.stringify({ network: payload.network, epoch: payload.epoch, contract_id: payload.contract_id,
     event_id: payload.event_id, raw: payload.raw, decoded: payload.decoded });
   const hash = createHash('sha256').update(stable).digest('hex');
@@ -76,6 +92,11 @@ app.post('/webhook', async (request, reply) => {
     if (row.processed_at) await enqueueReceipt(client, row.id, payload.delivery_id, row.processing_run_id,
       payload.event_id, row.processed_at);
     await client.query('COMMIT');
+    if (labScenario === 'commit_drop') {
+      await processInbox(row.id);
+      reply.hijack(); reply.raw.destroy();
+      return reply;
+    }
     return reply.code(202).send({ accepted: true, duplicate: Boolean(row.processed_at) });
   } catch (error) { await client.query('ROLLBACK'); throw error; }
   finally { client.release(); }
@@ -91,13 +112,14 @@ async function enqueueReceipt(client: pg.PoolClient, inboxId: string, deliveryId
   [deliveryId, JSON.stringify(body)]);
 }
 
-async function processInbox(): Promise<void> {
+async function processInbox(inboxId?: string): Promise<void> {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
     const pending = await client.query<{ id: string; network: string; epoch: string; contract_id: string;
       reservation_id: string; rpc_event_id: string; business_event_id: string; attendee: string; processing_run_id: string }>(`
-      SELECT * FROM inbox_events WHERE processed_at IS NULL ORDER BY received_at FOR UPDATE SKIP LOCKED LIMIT 1`);
+      SELECT * FROM inbox_events WHERE processed_at IS NULL AND ($1::uuid IS NULL OR id=$1)
+      ORDER BY received_at FOR UPDATE SKIP LOCKED LIMIT 1`, [inboxId ?? null]);
     const event = pending.rows[0];
     if (!event) { await client.query('COMMIT'); return; }
     await client.query(`INSERT INTO tickets(network,epoch,contract_id,reservation_id,rpc_event_id,business_event_id,attendee)
@@ -149,6 +171,31 @@ app.get('/demo/tickets', async (request, reply) => {
   const result = await pool.query(`SELECT id,network,epoch,contract_id,reservation_id,rpc_event_id,
     business_event_id,attendee,created_at FROM tickets ORDER BY created_at DESC LIMIT 100`);
   return { items: result.rows };
+});
+app.post('/demo/lab-sessions', async (request, reply) => {
+  if (cfg.NODE_ENV === 'production' || request.headers['x-demo-key'] !== cfg.DEMO_API_KEY)
+    return reply.code(401).send({ error: 'Unauthorized' });
+  if (!Buffer.isBuffer(request.body)) return reply.code(400).send({ error: 'Expected JSON bytes' });
+  let input: unknown;
+  try { input = JSON.parse(request.body.toString('utf8')); }
+  catch { return reply.code(400).send({ error: 'Invalid JSON' }); }
+  const body = z.object({ scenario: z.enum(['http_503', 'timeout', 'duplicate', 'commit_drop']),
+    budget: z.number().int().min(1).max(3).default(1), ttl_seconds: z.number().int().min(30).max(900).default(300) }).parse(input);
+  const token = newSecret('lab');
+  const result = await pool.query<{ id: string; expires_at: Date }>(`INSERT INTO lab_sessions(token_hash,scenario,budget,expires_at)
+    VALUES ($1,$2,$3,now()+($4::int * interval '1 second')) RETURNING id,expires_at`,
+  [hashSecret(token), body.scenario, body.budget, body.ttl_seconds]);
+  reply.code(201);
+  return { id: result.rows[0]!.id, token, scenario: body.scenario, budget: body.budget, expires_at: result.rows[0]!.expires_at };
+});
+app.get('/demo/lab-sessions/:id', async (request, reply) => {
+  if (cfg.NODE_ENV === 'production' || request.headers['x-demo-key'] !== cfg.DEMO_API_KEY)
+    return reply.code(401).send({ error: 'Unauthorized' });
+  const { id } = z.object({ id: z.uuid() }).parse(request.params);
+  const result = await pool.query(`SELECT id,scenario,budget,used,expires_at,created_at
+    FROM lab_sessions WHERE id=$1`, [id]);
+  if (!result.rows[0]) return reply.code(404).send({ error: 'Lab session not found' });
+  return result.rows[0];
 });
 app.get('/health/live', async () => ({ status: 'ok' }));
 
