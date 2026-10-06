@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import Fastify from 'fastify';
 import pg from 'pg';
 import { z } from 'zod';
-import { verifyWebhook, type WebhookPayload } from '../../src/protocol/webhook.js';
+import { verifyWebhook } from '../../src/protocol/webhook.js';
 
 if (existsSync('.env')) process.loadEnvFile('.env');
 const cfg = z.object({

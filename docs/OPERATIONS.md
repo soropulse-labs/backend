@@ -1,0 +1,19 @@
+# Operations (MVP development)
+
+## Processes and storage
+
+PostgreSQL 16 stores control-plane records, ingestion checkpoints, events, delivery jobs, attempts, receipts, replay plans, and coverage incidents. The API (`pnpm start:api`), ingestion worker (`pnpm start:ingest`), and delivery worker (`pnpm start:deliver`) are separate, continuously running Node processes. Run `pnpm db:migrate` as a controlled step before starting them. The example consumer (`pnpm start:consumer`) uses the separate `soropulse_consumer` database and `consumer` credentials created by `docker/postgres/init.sql` on first PostgreSQL volume creation. Existing volumes do not rerun that initialization script.
+
+Configure `.env` from `.env.example`. `DATABASE_URL` points at the backend database; `CONSUMER_DATABASE_URL` points at the isolated consumer database. Docker Compose overrides both with container hostnames. Never expose PostgreSQL to the public network. Back up both databases together if preserving demo processing evidence; test restore procedures before relying on them. All stored timestamps use PostgreSQL `timestamptz` and API ISO 8601 UTC output.
+
+The consumer also requires `CONSUMER_ID`, `CONSUMER_RECEIPT_CREDENTIAL`, `CONSUMER_SIGNING_KEY_ID`, `CONSUMER_SIGNING_SECRET`, `CONSUMER_CONTRACT_ID`, `API_URL`, and `DEMO_API_KEY`. Create a consumer and endpoint through the authenticated API, record their one-time returned secrets securely, then set these variables. The consumer accepts only its configured contract and network epoch. To use it as the webhook destination in local development, set `DEV_AUTH_ENABLED=true` and the exact `DEV_ALLOWED_ENDPOINTS=http://127.0.0.1:3002/webhook`; verify the endpoint before creating a subscription. In containers the consumer's `API_URL` is `http://api:3001` and its database hostname is `postgres`.
+
+## Ingestion and recovery
+
+Subscription creation requires an explicit starting ledger. The worker never claims history before that point. It uses `getHealth.oldestLedger` and `latestLedger` rather than a fixed retention assumption. When a checkpoint precedes provider retention, it records a `retention_gap` and halts advancement. A checkpoint far beyond the provider's latest ledger records a `suspected_reset`; that alone is not proof of a reset. Confirm the network and contract deployment independently, register a new epoch and subscription, and document any unavailable range. Do not move a checkpoint forward silently. After a temporary RPC outage, the existing checkpoint remains and the worker retries. Database transactions encompass captured events, initial jobs, and checkpoint advancement; outbound RPC and webhook HTTP calls occur outside database transactions.
+
+The delivery worker uses PostgreSQL leases and attempt records. It retries transient failures up to eight total attempts with bounded backoff; permanent failures and exhaustion become dead letters. An HTTP 2xx acknowledges transport only. A receiver can commit work and lose the response, so consumers need stable event deduplication. The example consumer stores an inbox before HTTP acknowledgement and writes tickets and receipt outbox entries in one transaction. Keep its deduplication records at least as long as the supported replay horizon.
+
+## Deployment status
+
+No hosted backend deployment or live testnet smoke test has passed yet. The Compose setup is intended for local development and self-hosting experiments. Production hosting needs a persistent PostgreSQL instance, an API service, two always-running worker services, managed credentials, HTTPS, monitoring, backups, and a controlled migration job. Do not configure a sleeping web service or request-only function for ingestion or delivery. See [build status](BUILD_STATUS.md) for current verified checks and remaining work.

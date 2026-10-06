@@ -106,7 +106,7 @@ export async function ingestOnce(pool: pg.Pool, rpcFactory = (url: string) => ne
           INSERT INTO captured_events(environment_id,network,epoch,contract_id,rpc_event_id,tx_hash,
             ledger,ledger_closed_at,topic_xdr,value_xdr,decoded,decoder,decode_error)
           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12,$13)
-          ON CONFLICT (network,epoch,contract_id,rpc_event_id)
+          ON CONFLICT (environment_id,network,epoch,contract_id,rpc_event_id)
           DO UPDATE SET rpc_event_id=EXCLUDED.rpc_event_id RETURNING id`,
         [claim.environment_id, claim.network, claim.epoch, claim.contract_id, event.id, event.txHash,
           event.ledger, event.ledgerClosedAt ?? null, event.topic, event.value,

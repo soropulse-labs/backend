@@ -80,7 +80,7 @@ export const capturedEvents = pgTable('captured_events', {
   decoder: text('decoder'), decodeError: text('decode_error'),
   capturedAt: time('captured_at').notNull().defaultNow(),
 }, (t) => [
-  uniqueIndex('events_identity_idx').on(t.network, t.epoch, t.contractId, t.rpcEventId),
+  uniqueIndex('events_identity_idx').on(t.environmentId, t.network, t.epoch, t.contractId, t.rpcEventId),
   index('events_env_ledger_idx').on(t.environmentId, t.ledger),
   index('events_env_tx_idx').on(t.environmentId, t.txHash),
 ]);
