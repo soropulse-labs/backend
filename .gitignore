@@ -1,47 +1,6 @@
-# Rust
-target/
-*.wasm
-
-# Node
 node_modules/
-.pnpm-store/
 dist/
-.next/
-out/
-
-# Test/coverage output
-coverage/
-
-# Environment
 .env
-.env.local
 .env.*.local
-.env.testnet
-
-# OS
-.DS_Store
-Thumbs.db
-
-# IDE
-.vscode/
-.idea/
-*.swp
-.claude/
-.cargo/
-test_snapshots/
-tools/sim/reports/*.json
-.opencode
-
-# Local build artifacts
-/target_local/
-.kilo/
-.kilocode/
-.opencode
-
-# Generated test output
-# Soroban writes these on every `cargo test` run; they are build output,
-# regenerated locally and never read by the build or CI.
-test_snapshots/
-# Captured command output (e.g. `cargo test > test_output.txt`) never belongs in contract sources.
-contracts/*/src/**/*.txt
-tools/sim/reports/*.json
+coverage/
+*.log

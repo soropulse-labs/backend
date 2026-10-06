@@ -1,14 +1,16 @@
 {
   "compilerOptions": {
-    "target": "ES2020",
-    "module": "commonjs",
-    "moduleResolution": "node",
-    "esModuleInterop": true,
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
     "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "esModuleInterop": true,
     "skipLibCheck": true,
-    "noEmit": true,
-    "resolveJsonModule": true,
-    "types": ["node"]
+    "outDir": "dist",
+    "rootDir": ".",
+    "resolveJsonModule": true
   },
-  "include": ["scripts/**/*.ts"]
+  "include": ["src/**/*.ts", "examples/**/*.ts", "test/**/*.ts", "integration/**/*.ts", "drizzle.config.ts"]
 }
