@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
+import { createServer } from 'node:http';
 import { test } from 'node:test';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import pg from 'pg';
@@ -8,6 +9,7 @@ import { createDatabase } from '../src/db/client.js';
 import type { Config } from '../src/config.js';
 import { createApp } from '../src/api/server.js';
 import { encrypt } from '../src/crypto.js';
+import { verifyWebhook } from '../src/protocol/webhook.js';
 
 if (existsSync('.env')) process.loadEnvFile('.env');
 const databaseUrl = process.env.DATABASE_URL;
@@ -21,7 +23,24 @@ test('scoped receipts are idempotent and replay rechecks reported success', asyn
   await admin.query(`CREATE DATABASE ${dbName}`);
   const { db, pool } = createDatabase(url.toString());
   let app: Awaited<ReturnType<typeof createApp>> | undefined;
+  let verificationSecret = '';
+  let verificationKeyId = '';
+  const server = createServer(async (request, response) => {
+    const chunks: Buffer[] = [];
+    for await (const chunk of request) chunks.push(Buffer.from(chunk));
+    const body = Buffer.concat(chunks);
+    const valid = request.headers['soropulse-key-id'] === verificationKeyId &&
+      verifyWebhook({ secret: verificationSecret, timestamp: String(request.headers['soropulse-timestamp']),
+        deliveryId: String(request.headers['soropulse-id']), signature: String(request.headers['soropulse-signature']), body });
+    if (!valid) { response.writeHead(401).end(); return; }
+    const challenge = (JSON.parse(body.toString('utf8')) as { challenge: string }).challenge;
+    response.writeHead(200, { 'content-type': 'text/plain' }).end(challenge);
+  });
   try {
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('Verification receiver failed to bind');
+    const destination = `http://127.0.0.1:${address.port}/webhook`;
     await migrate(db, { migrationsFolder: './drizzle' });
     const config: Config = {
       NODE_ENV: 'development', DATABASE_URL: url.toString(),
@@ -30,7 +49,7 @@ test('scoped receipts are idempotent and replay rechecks reported success', asyn
       API_HOST: '127.0.0.1', API_PORT: 3001, PUBLIC_BASE_URL: 'http://localhost:3001',
       FRONTEND_ORIGIN: 'http://localhost:3000', GITHUB_CLIENT_ID: '', GITHUB_CLIENT_SECRET: '',
       SESSION_SECRET: 'x'.repeat(32), ENCRYPTION_KEY: '0'.repeat(64),
-      DEV_AUTH_ENABLED: true, DEV_ALLOWED_ENDPOINTS: '',
+      DEV_AUTH_ENABLED: true, DEV_ALLOWED_ENDPOINTS: destination,
     };
     app = await createApp(pool, config);
     const login = await app.inject({ method: 'POST', url: '/v1/auth/dev-login', payload: { login: `test${randomUUID().slice(0, 8)}` } });
@@ -103,10 +122,38 @@ test('scoped receipts are idempotent and replay rechecks reported success', asyn
     assert.equal(executeAgain.json().idempotent, true);
     const jobs = await pool.query<{ count: string }>('SELECT count(*)::text AS count FROM deliveries WHERE replay_plan_id=$1', [planId]);
     assert.equal(jobs.rows[0]!.count, '0');
+    const rotation = await app.inject({ method: 'POST', url: `/v1/endpoints/${endpoint}/rotate-key`,
+      headers: writeHeaders, payload: {} });
+    assert.equal(rotation.statusCode, 201, rotation.body);
+    assert.equal(rotation.json().version, 2);
+    const pinned = await pool.query<{ active_version_id: string; endpoint_version_id: string }>(`
+      SELECT ep.active_version_id,d.endpoint_version_id FROM endpoints ep JOIN deliveries d ON d.endpoint_version_id=$2
+      WHERE ep.id=$1 LIMIT 1`, [endpoint, version]);
+    assert.equal(pinned.rows[0]!.active_version_id, version);
+    assert.equal(pinned.rows[0]!.endpoint_version_id, version);
+    const destinationChange = await app.inject({ method: 'POST', url: `/v1/endpoints/${endpoint}/change-destination`,
+      headers: writeHeaders, payload: { url: destination } });
+    assert.equal(destinationChange.statusCode, 201, destinationChange.body);
+    assert.equal(destinationChange.json().version, 3);
+    verificationSecret = destinationChange.json().signing_secret as string;
+    verificationKeyId = destinationChange.json().signing_key_id as string;
+    const stale = await app.inject({ method: 'POST', url: `/v1/endpoints/${endpoint}/verify`,
+      headers: writeHeaders, payload: { version_id: rotation.json().version_id } });
+    assert.equal(stale.statusCode, 409);
+    const verified = await app.inject({ method: 'POST', url: `/v1/endpoints/${endpoint}/verify`,
+      headers: writeHeaders, payload: { version_id: destinationChange.json().version_id } });
+    assert.equal(verified.statusCode, 200, verified.body);
+    assert.equal(verified.json().activated, true);
+    const after = await pool.query<{ active_version_id: string; endpoint_version_id: string }>(`
+      SELECT ep.active_version_id,d.endpoint_version_id FROM endpoints ep JOIN deliveries d ON d.endpoint_version_id=$2
+      WHERE ep.id=$1 LIMIT 1`, [endpoint, version]);
+    assert.equal(after.rows[0]!.active_version_id, destinationChange.json().version_id);
+    assert.equal(after.rows[0]!.endpoint_version_id, version);
   } finally {
     if (app) await app.close();
     await pool.end();
     await admin.query(`DROP DATABASE ${dbName}`);
     await admin.end();
+    if (server.listening) await new Promise<void>((resolve) => server.close(() => resolve()));
   }
 });

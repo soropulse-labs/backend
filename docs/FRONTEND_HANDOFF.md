@@ -8,7 +8,7 @@ The current API route groups are:
 | --- | --- |
 | Projects and environments | `/v1/projects`, `/v1/projects/:id/environments` |
 | API keys | `/v1/projects/:id/api-keys`, `/v1/projects/:id/api-keys/:keyId/revoke` |
-| Endpoints | `/v1/environments/:id/endpoints`, `/v1/endpoints/:id/verify`, `/v1/endpoints/:id/disable` |
+| Endpoints | `/v1/environments/:id/endpoints`, `/v1/endpoints/:id/verify`, `/v1/endpoints/:id/rotate-key`, `/v1/endpoints/:id/change-destination`, `/v1/endpoints/:id/disable` |
 | Subscriptions and consumers | `/v1/environments/:id/subscriptions`, `/v1/subscriptions/:id/disable`, `/v1/environments/:id/consumers`, `/v1/consumers/:id/credentials/:credentialId/revoke` |
 | Event evidence | `/v1/environments/:id/events`, `/v1/environments/:id/events/:eventId`, `/v1/environments/:id/transactions/:hash`, `/v1/environments/:id/coverage-incidents` |
 | Delivery evidence | `/v1/environments/:id/deliveries`, `/v1/environments/:id/deliveries/:deliveryId` |

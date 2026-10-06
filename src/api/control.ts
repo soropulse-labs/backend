@@ -1,5 +1,5 @@
 import { randomBytes, randomUUID } from 'node:crypto';
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type pg from 'pg';
 import { StrKey, xdr } from '@stellar/stellar-sdk';
 import { z } from 'zod';
@@ -116,18 +116,73 @@ export function registerControlRoutes(app: FastifyInstance, pool: pg.Pool, confi
   app.post('/v1/endpoints/:id/verify', async (request) => {
     const actor = await requireActor(request, pool, 'write');
     const { id } = pathId.parse(request.params);
-    const ep = await pool.query<{ environment_id: string; version_id: string; url: string; signing_secret_cipher: string; signing_key_id: string }>(`
-      SELECT ep.environment_id,v.id AS version_id,v.url,v.signing_secret_cipher,v.signing_key_id
-      FROM endpoints ep JOIN endpoint_versions v ON v.id=ep.active_version_id WHERE ep.id=$1 AND ep.disabled_at IS NULL`, [id]);
+    const { version_id: requestedVersion } = z.object({ version_id: uuid.optional() }).parse(request.body ?? {});
+    const ep = await pool.query<{ environment_id: string; version_id: string; active_version_id: string; url: string; signing_secret_cipher: string; signing_key_id: string; version: number }>(`
+      SELECT ep.environment_id,ep.active_version_id,v.id AS version_id,v.version,v.url,v.signing_secret_cipher,v.signing_key_id
+      FROM endpoints ep JOIN endpoint_versions v ON v.endpoint_id=ep.id
+      WHERE ep.id=$1 AND ep.disabled_at IS NULL AND v.id=COALESCE($2::uuid,ep.active_version_id)`, [id, requestedVersion ?? null]);
     const row = ep.rows[0]; if (!row) throw Object.assign(new Error('Endpoint not found'), { statusCode: 404 });
     await requireEnvironment(pool, actor, row.environment_id);
+    const latest = await pool.query<{ version: number }>('SELECT max(version)::int AS version FROM endpoint_versions WHERE endpoint_id=$1', [id]);
+    if (requestedVersion && row.version !== latest.rows[0]?.version) throw Object.assign(new Error('Endpoint version is stale'), { statusCode: 409 });
     const challenge = randomBytes(24).toString('hex');
     const body = Buffer.from(JSON.stringify({ type: 'soropulse.endpoint.verify', challenge }));
     const headers = webhookHeaders(decrypt(row.signing_secret_cipher, config.ENCRYPTION_KEY), row.signing_key_id, randomUUID(), body);
     const result = await postWebhook(row.url, body, headers, config);
     if (result.status !== 200 || result.preview !== challenge) throw Object.assign(new Error('Endpoint verification failed'), { statusCode: 422 });
-    await pool.query('UPDATE endpoint_versions SET verified_at=now() WHERE id=$1', [row.version_id]);
-    return { verified: true, version_id: row.version_id };
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const changed = await client.query(`UPDATE endpoints SET active_version_id=$2 WHERE id=$1 AND active_version_id=$3
+        AND NOT EXISTS (SELECT 1 FROM endpoint_versions newer WHERE newer.endpoint_id=$1 AND newer.version>$4)
+        RETURNING id`, [id, row.version_id, row.active_version_id, row.version]);
+      if (!changed.rows[0]) throw Object.assign(new Error('Endpoint changed during verification'), { statusCode: 409 });
+      await client.query('UPDATE endpoint_versions SET verified_at=now() WHERE id=$1', [row.version_id]);
+      await client.query('COMMIT');
+    } catch (error) { await client.query('ROLLBACK'); throw error; }
+    finally { client.release(); }
+    return { verified: true, version_id: row.version_id, activated: row.version_id !== row.active_version_id };
+  });
+
+  async function stageVersion(request: FastifyRequest, id: string,
+    destination?: string) {
+    const actor = await requireActor(request, pool, 'write');
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const endpoint = await client.query<{ environment_id: string; url: string; version: number }>(`
+        SELECT ep.environment_id,v.url,v.version FROM endpoints ep
+        JOIN endpoint_versions v ON v.id=ep.active_version_id
+        WHERE ep.id=$1 AND ep.disabled_at IS NULL FOR UPDATE OF ep`, [id]);
+      const active = endpoint.rows[0];
+      if (!active) throw Object.assign(new Error('Endpoint not found'), { statusCode: 404 });
+      await requireEnvironment(pool, actor, active.environment_id);
+      const url = destination ?? active.url;
+      const secret = randomBytes(32).toString('base64url');
+      const keyId = randomUUID();
+      const next = await client.query<{ id: string; version: number }>(`INSERT INTO endpoint_versions(endpoint_id,version,url,signing_secret_cipher,signing_key_id)
+        SELECT $1,max(version)+1,$2,$3,$4 FROM endpoint_versions WHERE endpoint_id=$1
+        RETURNING id,version`, [id, url, encrypt(secret, config.ENCRYPTION_KEY), keyId]);
+      await client.query('COMMIT');
+      return { endpoint_id: id, version_id: next.rows[0]!.id, version: next.rows[0]!.version,
+        signing_secret: secret, signing_key_id: keyId, url,
+        verification: `POST /v1/endpoints/${id}/verify with {"version_id":"${next.rows[0]!.id}"}` };
+    } catch (error) { await client.query('ROLLBACK'); throw error; }
+    finally { client.release(); }
+  }
+
+  app.post('/v1/endpoints/:id/rotate-key', async (request, reply) => {
+    const { id } = pathId.parse(request.params);
+    const result = await stageVersion(request, id);
+    reply.code(201); return result;
+  });
+
+  app.post('/v1/endpoints/:id/change-destination', async (request, reply) => {
+    const { id } = pathId.parse(request.params);
+    const { url } = z.object({ url: z.url().max(2048) }).parse(request.body);
+    await validateDestination(url, config);
+    const result = await stageVersion(request, id, url);
+    reply.code(201); return result;
   });
 
   app.post('/v1/endpoints/:id/disable', async (request) => {
