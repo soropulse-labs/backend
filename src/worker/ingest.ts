@@ -21,7 +21,7 @@ export async function claimStream(pool: pg.Pool): Promise<StreamClaim | null> {
     WHERE id = (SELECT s.id FROM ingestion_streams s
       JOIN subscriptions sub ON sub.id=s.subscription_id
       JOIN environments env ON env.id=sub.environment_id
-      WHERE sub.active AND env.active AND (s.lease_until IS NULL OR s.lease_until<now())
+      WHERE sub.active AND env.active AND NOT s.halted AND (s.lease_until IS NULL OR s.lease_until<now())
       ORDER BY s.updated_at, s.id FOR UPDATE OF s SKIP LOCKED LIMIT 1)
     RETURNING id`, [token]);
   if (!claimed.rows[0]) return null;
@@ -68,9 +68,21 @@ async function fetchWindow(rpc: StellarRpc, claim: StreamClaim, endLedger: numbe
   throw new Error('Event window exceeded pagination bound; reduce ledger window');
 }
 
-async function recordIncident(pool: pg.Pool, claim: StreamClaim, kind: string, evidence: Record<string, unknown>): Promise<void> {
-  await pool.query(`INSERT INTO coverage_incidents(environment_id,subscription_id,kind,evidence,from_ledger)
-    VALUES ($1,$2,$3,$4::jsonb,$5)`, [claim.environment_id, claim.subscription_id, kind, JSON.stringify(evidence), claim.next_ledger]);
+async function haltStream(pool: pg.Pool, claim: StreamClaim, kind: string, evidence: Record<string, unknown>, reason: string): Promise<void> {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const fence = await client.query(`SELECT id FROM ingestion_streams WHERE id=$1 AND lease_token=$2
+      AND lease_until>now() FOR UPDATE`, [claim.id, claim.lease_token]);
+    if (!fence.rows[0]) throw new Error('Ingestion lease expired before gap handling');
+    await client.query(`INSERT INTO coverage_incidents(environment_id,subscription_id,kind,evidence,from_ledger)
+      VALUES ($1,$2,$3,$4::jsonb,$5)`, [claim.environment_id, claim.subscription_id, kind, JSON.stringify(evidence), claim.next_ledger]);
+    await client.query(`UPDATE ingestion_streams SET halted=true,halt_reason=$3,last_error=$3,
+      lease_token=NULL,lease_until=NULL,updated_at=now() WHERE id=$1 AND lease_token=$2`,
+    [claim.id, claim.lease_token, reason]);
+    await client.query('COMMIT');
+  } catch (error) { await client.query('ROLLBACK'); throw error; }
+  finally { client.release(); }
 }
 
 export async function ingestOnce(pool: pg.Pool, rpcFactory = (url: string) => new StellarRpc(url)):
@@ -83,12 +95,16 @@ export async function ingestOnce(pool: pg.Pool, rpcFactory = (url: string) => ne
     const rpc = rpcFactory(claim.rpc_url);
     const health = await rpc.getHealth();
     if (start < health.oldestLedger) {
-      await recordIncident(pool, claim, 'retention_gap', { oldestLedger: health.oldestLedger, latestLedger: health.latestLedger });
-      await release(pool, claim, 'Capture halted: checkpoint is older than provider retention');
+      await haltStream(pool, claim, 'retention_gap', { oldestLedger: health.oldestLedger, latestLedger: health.latestLedger },
+        'Capture halted: checkpoint is older than provider retention');
       return 'gap';
     }
     if (start > health.latestLedger) {
-      if (start > health.latestLedger + 100) await recordIncident(pool, claim, 'suspected_reset', { latestLedger: health.latestLedger, checkpoint: start });
+      if (start > health.latestLedger + 100) {
+        await haltStream(pool, claim, 'suspected_reset', { latestLedger: health.latestLedger, checkpoint: start },
+          'Capture halted: provider ledger is far behind checkpoint; confirm reset');
+        return 'gap';
+      }
       await release(pool, claim);
       return 'waiting';
     }

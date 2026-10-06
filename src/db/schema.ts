@@ -67,7 +67,8 @@ export const streams = pgTable('ingestion_streams', {
   id: id(), subscriptionId: uuid('subscription_id').notNull().unique().references(() => subscriptions.id, { onDelete: 'cascade' }),
   nextLedger: bigint('next_ledger', { mode: 'number' }).notNull(),
   leaseToken: uuid('lease_token'), leaseUntil: time('lease_until'),
-  lastError: text('last_error'), updatedAt: time('updated_at').notNull().defaultNow(),
+  lastError: text('last_error'), halted: boolean('halted').notNull().default(false),
+  haltReason: text('halt_reason'), updatedAt: time('updated_at').notNull().defaultNow(),
 });
 
 export const capturedEvents = pgTable('captured_events', {

@@ -227,7 +227,7 @@ export function registerControlRoutes(app: FastifyInstance, pool: pg.Pool, confi
     const actor = await requireActor(request, pool, 'read');
     const { id } = pathId.parse(request.params); await requireEnvironment(pool, actor, id);
     const result = await pool.query(`SELECT sub.id,sub.endpoint_id,sub.contract_id,sub.topic0_xdr,sub.decoder,
-      sub.start_ledger,sub.active,s.next_ledger,s.last_error FROM subscriptions sub
+      sub.start_ledger,sub.active,s.next_ledger,s.last_error,s.halted,s.halt_reason FROM subscriptions sub
       JOIN ingestion_streams s ON s.subscription_id=sub.id WHERE sub.environment_id=$1 ORDER BY sub.created_at DESC LIMIT 100`, [id]);
     return { items: result.rows };
   });
